@@ -1,0 +1,161 @@
+# app 的唯一 id,上架到商店需要保证不要冲突,尽量使用开发者自己的域名作为后缀.
+package: cloud.lazycat.app.liu.formbricks
+# app 的版本
+version: 4.0.1
+
+name: Formbricks
+keywords: formbricks, survey, feedback, experience management, user research, analytics, open source
+description: 开源体验管理平台
+
+# 该应用不支持在小分辨率设备上运行
+unsupported_platforms:                    # 不支持的平台列表
+  - ios
+  - android
+  - tvos
+
+# 软件名称,会显示在启动器之类的地方
+locales:
+  zh:
+    name: Formbricks
+    description: |
+      ## Formbricks - 开源体验管理平台
+
+      **官方网站：** https://formbricks.com/
+      **仓库地址：** https://github.com/lazycatapps/formbricks.git
+
+      Formbricks 是一个开源的体验管理平台,帮助产品团队通过深入了解用户体验来打造更好的产品。它提供了强大的调研和反馈收集工具,让您能够在正确的时间、正确的地点向正确的用户提出正确的问题。
+
+      ## 主要功能
+
+      - 📝 创建和管理用户调研问卷
+      - 🎯 精准的用户定位和触发规则
+      - 📊 实时数据分析和可视化
+      - 🔌 强大的 API 和集成能力
+      - 🌐 支持多语言,包含中文界面
+      - 🔒 数据隐私保护,支持自托管
+      - 📱 跨平台支持,Web 和移动端
+
+  en:
+    name: Formbricks
+    description: |
+      ## Formbricks - Open Source Experience Management
+
+      **Official Website:** https://formbricks.com/
+      **Repository:** https://github.com/lazycatapps/formbricks.git
+
+      Formbricks is an open-source Experience Management platform that helps product teams build better products through deep user insights. It provides powerful survey and feedback collection tools, enabling you to ask the right questions to the right users at the right time and place.
+
+      ## Main Features
+
+      - 📝 Create and manage user surveys
+      - 🎯 Precise user targeting and trigger rules
+      - 📊 Real-time data analysis and visualization
+      - 🔌 Powerful API and integration capabilities
+      - 🌐 Multi-language support, including Chinese interface
+      - 🔒 Data privacy protection, self-hosting support
+      - 📱 Cross-platform support, Web and mobile
+
+# 软件本身的 license
+license: https://github.com/formbricks/formbricks/blob/main/LICENSE
+
+# 软件的主页,会在商店等地方体现
+homepage: https://github.com/formbricks/formbricks
+
+# lpk 的作者,会在商店等地方体现
+author: liu
+
+# application 作为一个特殊的 container 运行,对应的 service 名称为固定的 `app`,其他 service 可以通过此名称与 app 进行通讯
+application:
+  # 是否存在后台任务,若存在则系统不会对此 app 进行主动休眠等操作
+  background_task: true
+
+  # 期望的 app 域名,如果系统中已经有对应域名则会提示用户选择其他域名。最终 app 分配到的域名以 /lzcapp/run/app.subdomain 为准
+  subdomain: formbricks
+
+  routes:
+    - /=http://formbricks:3000
+
+  # 页面本身是有鉴权的，所以可以不需要 lazycat 的鉴权。
+  # 如果不开启该选项，会导致 OAuth2.0 认证失败，中间多了一个鉴权页面。
+  public_path:
+    - /                         # 无需登录即可访问
+
+  depends_on:
+    - formbricks
+
+  # 健康检测配置
+  health_check:
+    test_url: http://formbricks:3000
+    start_period: 300s
+
+  # 是否启用多实例
+  multi_instance: false
+
+services:
+  postgres:
+    # lzc-cli appstore copy-image pgvector/pgvector:pg17
+    image: registry.lazycat.cloud/liu/pgvector/pgvector:b11db79f1fc3520d
+    environment:
+      - POSTGRES_PASSWORD=postgres
+    binds:
+      - /lzcapp/var/postgres:/var/lib/postgresql/data
+    health_check:
+      test:
+        - CMD-SHELL
+        - pg_isready -U postgres
+      start_period: 30s
+
+  redis:
+    # lzc-cli appstore copy-image valkey/valkey@sha256:12ba4f45a7c3e1d0f076acd616cb230834e75a77e8516dde382720af32832d6d
+    image: registry.lazycat.cloud/liu/valkey/valkey:a5122db61af47bbe
+    command: valkey-server --appendonly yes
+    binds:
+      - /lzcapp/var/redis:/data
+    health_check:
+      test:
+        - CMD
+        - valkey-cli
+        - ping
+      start_period: 10s
+
+  minio:
+    # lzc-cli appstore copy-image minio/minio:RELEASE.2024-12-18T00-36-02Z
+    image: registry.lazycat.cloud/liu/minio/minio:7f6212a22b140206
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=formbricks-upload
+      - MINIO_ROOT_PASSWORD=formbricks-upload-secret
+    binds:
+      - /lzcapp/var/minio:/data
+    health_check:
+      test:
+        - CMD-SHELL
+        - curl -fsS http://localhost:9000/minio/health/live || exit 1
+      start_period: 20s
+
+  formbricks:
+    # lzc-cli appstore copy-image ghcr.io/formbricks/formbricks:latest
+    image: registry.lazycat.cloud/liu/formbricks/formbricks:b433b8d220d7ee13
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    binds:
+      - /lzcapp/pkg/content/saml-connection:/home/nextjs/apps/web/saml-connection
+    environment:
+      - WEBAPP_URL=https://${LAZYCAT_APP_DOMAIN}
+      - NEXTAUTH_URL=https://${LAZYCAT_APP_DOMAIN}
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/formbricks?schema=public
+      - NEXTAUTH_SECRET=babce39348293b0f06622d0f2d8e02855c8c095fe69e0e23b88dc699a33e28fd
+      - ENCRYPTION_KEY=7816126bd9fb4400b250bac15498d99918919940e9023d647c3da7161c711cbb
+      - CRON_SECRET=fdbd9cb72e7010b3fcaad17624b6606a5d72baf93cfe8fd5802222c11c044c05
+      - REDIS_URL=redis://redis:6379
+      - S3_ACCESS_KEY=formbricks-upload
+      - S3_SECRET_KEY=formbricks-upload-secret
+      - S3_REGION=us-east-1
+      - S3_BUCKET_NAME=formbricks-uploads
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_FORCE_PATH_STYLE=1
+      - LOG_LEVEL=info
+      - EMAIL_VERIFICATION_DISABLED=1
+      - PASSWORD_RESET_DISABLED=1
